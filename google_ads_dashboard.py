@@ -627,25 +627,39 @@ if uploaded_file is not None:
         try:
             # 讀取檔案
             if uploaded_file.name.endswith(".csv"):
-                # Google Ads CSV 前幾行可能含有報表標頭，跳過以 # 開頭的行
-                raw_content = uploaded_file.read().decode("utf-8", errors="replace")
-                lines = raw_content.split("\n")
-                # 跳過以引號+特殊字開頭的描述行（Google Ads 報表特有）
-                skip_rows = 0
-                for line in lines:
-                    stripped = line.strip().strip('"')
-                    if stripped.startswith("Google Ads") or stripped.startswith("Account") or stripped == "":
-                        skip_rows += 1
-                    else:
+                raw_bytes = uploaded_file.read()
+                # 嘗試多種編碼
+                for enc in ["utf-8-sig", "utf-8", "gbk", "big5", "latin-1"]:
+                    try:
+                        raw_content = raw_bytes.decode(enc)
                         break
+                    except Exception:
+                        continue
+
+                lines = raw_content.split("\n")
+
+                # ── 核心修復：找到真正的 header 行（欄位最多的那行）──
+                # Google Ads CSV 前幾行是描述文字（欄位數很少），
+                # 真正的 header 行欄位數最多
+                best_row = 0
+                best_count = 0
+                for i, line in enumerate(lines[:20]):  # 只掃前 20 行
+                    count = len(line.split(","))
+                    if count > best_count:
+                        best_count = count
+                        best_row = i
+
                 df_raw = pd.read_csv(
                     io.StringIO(raw_content),
-                    skiprows=skip_rows,
+                    skiprows=best_row,
                     thousands=",",
+                    on_bad_lines="skip",   # 跳過格式錯誤的行
                     encoding_errors="replace"
                 )
-                # 移除 Google Ads 底部的總計行
-                df_raw = df_raw[~df_raw.iloc[:, 0].astype(str).str.lower().str.contains("total|合計|总计", na=False)]
+                # 移除 Google Ads 底部的總計行 / 空行
+                df_raw = df_raw[~df_raw.iloc[:, 0].astype(str).str.lower().str.contains(
+                    r"total|合計|总计|^\s*$", na=False, regex=True
+                )]
             else:
                 df_raw = pd.read_excel(uploaded_file, thousands=",")
 
